@@ -13,14 +13,15 @@ SHELL = /usr/bin/env bash
 
 -include .make_options.mk
 
+PS2 ?= 1
 # If COMPARE is 1, check the output md5sum after building. Set to 0 when modding.
-COMPARE ?= 1
+COMPARE ?= 0
 # If NON_MATCHING is 1, define the NON_MATCHING C flag when building. Set to 1 when modding.
-NON_MATCHING ?= 0
+NON_MATCHING ?= 1
 # If ORIG_COMPILER is 1, compile with QEMU_IRIX and the original compiler.
 ORIG_COMPILER ?= 0
 # If COMPILER is "gcc", compile with GCC instead of IDO.
-COMPILER ?= ido
+COMPILER ?= ps2-gcc
 # Target game version. Ensure the corresponding input ROM is placed in baseroms/$(VERSION)/baserom.z64.
 # Currently the following versions are supported:
 #   ntsc-1.0       N64 NTSC 1.0 (Japan/US depending on REGION)
@@ -37,14 +38,20 @@ COMPILER ?= ido
 #   gc-eu-mq       GameCube Europe/PAL Master Quest
 #   gc-jp-ce       GameCube Japan (Collector's Edition disc)
 #   ique-cn        iQue Player (Simplified Chinese)
-VERSION ?= gc-eu-mq-dbg
+#   ps2-ntsc-1.2   PS2 NTSC 1.2
+VERSION ?= ps2-ntsc-1.2
 # Number of threads to extract and compress with.
 N_THREADS ?= $(shell nproc)
 # If DEBUG_OBJECTS is 1, produce additional debugging files such as objdump output or raw binaries for assets
 DEBUG_OBJECTS ?= 0
 # Set prefix to mips binutils binaries (mips-linux-gnu-ld => 'mips-linux-gnu-') - Change at your own risk!
 # In nearly all cases, not having 'mips-linux-gnu-*' binaries on the PATH indicates missing dependencies.
-MIPS_BINUTILS_PREFIX ?= mips-linux-gnu-
+ifeq ($(COMPILER),ps2-gcc)
+	MIPS_BINUTILS_PREFIX ?= mips64r5900el-ps2-elf-
+else
+	MIPS_BINUTILS_PREFIX ?= mips-linux-gnu-
+endif
+
 # Emulator w/ flags for 'make run'.
 N64_EMULATOR ?=
 # Set to override game region in the ROM header (options: JP, US, EU). This can be used to build a fake US version
@@ -173,6 +180,14 @@ else ifeq ($(VERSION),ique-cn)
   BUILD_DATE := 03-10-22
   BUILD_TIME := 16:23:19
   REVISION := 0
+else ifeq ($(VERSION),ps2-ntsc-1.2)
+	REGION ?= US
+	PLATFORM := PS2
+	DEBUG_FEATURES ?= 1
+	BUILD_CREATOR := a@b.com
+	BUILD_DATE :=
+	BUILD_TIME := 00:00:00
+	REVISION := 2
 else
 $(error Unsupported version $(VERSION))
 endif
@@ -185,6 +200,11 @@ ifneq ($(COMPILER),ido)
 endif
 
 ifeq ($(COMPILER),gcc)
+  CPP_DEFINES += -DCOMPILER_GCC
+  NON_MATCHING := 1
+endif
+
+ifeq ($(COMPILER),ps2-gcc)
   CPP_DEFINES += -DCOMPILER_GCC
   NON_MATCHING := 1
 endif
@@ -215,6 +235,10 @@ else ifeq ($(PLATFORM),IQUE)
   CPP_DEFINES += -DPLATFORM_N64=0 -DPLATFORM_GC=0 -DPLATFORM_IQUE=1
   LIBULTRA_VERSION := L
   LIBULTRA_PATCH := 0
+else ifeq ($(PLATFORM),PS2)
+  CPP_DEFINES += -DPLATFORM_N64=0 -DPLATFORM_GC=0 -DPLATFORM_IQUE=0
+  LIBULTRA_VERSION := I
+  LIBULTRA_PATCH := 1
 else
 $(error Unsupported platform $(PLATFORM))
 endif
@@ -264,6 +288,9 @@ else ifeq ($(COMPILER),ido)
   CC       := tools/ido_recomp/$(DETECTED_OS)/7.1/cc
   CC_OLD   := tools/ido_recomp/$(DETECTED_OS)/5.3/cc
   CCAS     := $(CC_OLD)
+else ifeq ($(COMPILER),ps2-gcc)
+	CC	:= $(MIPS_BINUTILS_PREFIX)gcc
+	CCAS	:= $(CC) -x assembler-with-cpp
 else
 $(error Unsupported compiler. Please use either ido or gcc as the COMPILER variable.)
 endif
@@ -354,6 +381,10 @@ ifeq ($(COMPILER),gcc)
   OPTFLAGS := -Os -ffast-math -fno-unsafe-math-optimizations
 endif
 
+ifeq ($(COMPILER),ps2-gcc)
+  OPTFLAGS := -ffast-math -fno-unsafe-math-optimizations
+endif
+
 GBI_DEFINES := -DF3DEX_GBI_2
 ifneq ($(PLATFORM),N64)
   GBI_DEFINES += -DF3DEX_GBI_PL -DGBI_DOWHILE
@@ -362,14 +393,18 @@ ifeq ($(DEBUG_FEATURES),1)
   GBI_DEFINES += -DGBI_DEBUG
 endif
 
-CPPFLAGS += -P -xc -fno-dollars-in-identifiers $(CPP_DEFINES)
-ASFLAGS += -march=vr4300 -32 -no-pad-sections -Iinclude -I$(EXTRACTED_DIR)
+# CPPFLAGS += -P -xc -fno-dollars-in-identifiers $(CPP_DEFINES)
+# ASFLAGS += -march=vr4300 -32 -no-pad-sections -Iinclude -I$(EXTRACTED_DIR)
 
 ifeq ($(COMPILER),gcc)
   CFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -nostdinc -MD -MP $(INC) -march=vr4300 -mfix4300 -mabi=32 -mno-abicalls -mdivide-breaks -fno-PIC -fno-common -ffreestanding -funsigned-char -fbuiltin -fno-builtin-sinf -fno-builtin-cosf $(CHECK_WARNINGS)
   CCASFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -nostdinc -MD -MP $(INC) -march=vr4300 -mfix4300 -mabi=32 -mno-abicalls -fno-PIC -fno-common -Wa,-no-pad-sections
   MIPS_VERSION := -mips3
-else
+else ifeq ($(COMPIELR),ps2-gcc)
+	CFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G0 -nostdinc -MD -MP $(INC) -march=r5900 -funsigned-char -fno-builtin-sinf -fno-builtin-cosf -fno-common -Wa,-no-pad-sections
+	CPPFLAGS += -P -xc -fno-dollars-in-identifiers $(CPP_DEFINES)
+	ASFLAGS += -march=r5900 -32 -Iinclude -I$(EXTRACTED_DIR)
+else 
   # Suppress warnings for wrong number of macro arguments (to fake variadic
   # macros) and Microsoft extensions such as anonymous structs (which the
   # compiler does support but warns for their usage).
