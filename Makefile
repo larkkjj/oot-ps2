@@ -400,15 +400,17 @@ ifeq ($(COMPILER),gcc)
   CFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -nostdinc -MD -MP $(INC) -march=vr4300 -mfix4300 -mabi=32 -mno-abicalls -mdivide-breaks -fno-PIC -fno-common -ffreestanding -funsigned-char -fbuiltin -fno-builtin-sinf -fno-builtin-cosf $(CHECK_WARNINGS)
   CCASFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -nostdinc -MD -MP $(INC) -march=vr4300 -mfix4300 -mabi=32 -mno-abicalls -fno-PIC -fno-common -Wa,-no-pad-sections
   MIPS_VERSION := -mips3
-else ifeq ($(COMPIELR),ps2-gcc)
+else ifeq ($(COMPILER),ps2-gcc)
 	CFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G0 -nostdinc -MD -MP $(INC) -march=r5900 -funsigned-char -fno-builtin-sinf -fno-builtin-cosf -fno-common -Wa,-no-pad-sections
 	CPPFLAGS += -P -xc -fno-dollars-in-identifiers $(CPP_DEFINES)
 	ASFLAGS += -march=r5900 -32 -Iinclude -I$(EXTRACTED_DIR)
+	EGCS_CFLAGS := $(CPP_DEFINES) $(GBI_DEFINES) -G0
+	EGCS_CCASFLAGS := -Wall
 else 
   # Suppress warnings for wrong number of macro arguments (to fake variadic
   # macros) and Microsoft extensions such as anonymous structs (which the
   # compiler does support but warns for their usage).
-  CFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -non_shared -fullwarn -verbose -Xcpluscomm $(INC) -Wab,-r4300_mul -woff 516,609,649,838,712,807
+  CFLAGS := $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -non_shared -fullwarn -verbose -Xcpluscomm $(INC) -Wab,-r4300_mul -woff 516,609,649,838,712,807
   CCASFLAGS += $(CPP_DEFINES) $(GBI_DEFINES) -G 0 -non_shared -fullwarn -verbose -Xcpluscomm $(INC) -Wab,-r4300_mul -woff 516,609,649,838,712,807 -o32
   MIPS_VERSION := -mips2
 
@@ -951,25 +953,38 @@ $(BUILD_DIR)/assets/%.o: $(EXTRACTED_DIR)/assets/%.c
 $(BUILD_DIR)/src/makerom/rom_header.o: src/makerom/rom_header.s
 ifeq ($(COMPILER),ido)
 	$(CPP) $(CPPFLAGS) $(MIPS_BUILTIN_DEFS) $(INC) -MD -MP -MF $(@:.o=.d) -MT $@ $< | $(AS) $(ASFLAGS) -o $@
+else ifeq ($(COMPILER),ps2-gcc)
+	$(CPP) $(CPPFLAGS) $(INC) -MD -MP -MF $(@:.o=.d) -MT $@ $< | $(AS) $(ASFLAGS) -o $@
 else
 	$(CCAS) -c $(CCASFLAGS) $(MIPS_VERSION) $(ASOPTFLAGS) -o $@ $<
 endif
 	$(OBJDUMP_CMD)
 
+ifeq ($(PLATFORM),PS2)
+	$(OBJCOPY) -I binary -O elf32-little --rename-section .data=.text $< $@
+else
 $(BUILD_DIR)/src/makerom/ipl3.o: $(EXTRACTED_DIR)/incbin/ipl3
 	$(OBJCOPY) -I binary -O elf32-big --rename-section .data=.text $< $@
+endif
 
 $(BUILD_DIR)/src/%.o: src/%.s
 ifeq ($(COMPILER),ido)
 # For header dependencies
 	$(CPP) $(MIPS_BUILTIN_DEFS) $(CPPFLAGS) -x assembler-with-cpp $(INC) -MD -MP -MF $(@:.o=.d) -MT $@ $< -o /dev/null
-	$(CCAS) -c $(CCASFLAGS) $(MIPS_VERSION) $(ASOPTFLAGS) -o $(@:.o=.tmp.o) $<
 # IDO generates bad symbol tables, fix the symbol table with strip..
 	$(STRIP) $(@:.o=.tmp.o) -N dummy-symbol-name
 # but strip doesn't know about file-relative offsets in .mdebug and doesn't relocate them, ld will
 # segfault unless .mdebug is removed
 	$(OBJCOPY) --remove-section .mdebug $(@:.o=.tmp.o) $@
 	@$(RM) $(@:.o=.tmp.o)
+
+else ifeq ($(COMPILER),ps2-gcc)
+#	$(CPP) $(CPPFLAGS) -x assembler-with-cpp $(INC) -MD -MP -MF $(@:.o=.d) -MT $@ $< -o /dev/null
+#	$(STRIP) $(@:.o=.tmp.o) -N dummy-symbol-name
+#	$(OBJCOPY) --remove-section .mdebug $(@:.o=.tmp.o) $@
+
+	$(CCAS) -c $(INC) -mips4 $(CCASFLAGS) $(MIPS_VERSION) $(ASOPTFLAGS) -o $(@:.o=.tmp.o) $<
+
 else
 	$(CCAS) -c $(CCASFLAGS) $(MIPS_VERSION) $(ASOPTFLAGS) -o $@ $<
 endif
